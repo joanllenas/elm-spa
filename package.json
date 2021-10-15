@@ -1,0 +1,20 @@
+{
+  "name": "elm-spa",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "create-dist": "rm -rf dist && cp -R public dist",
+    "build-elm": "elm make src/Main.elm --output=dist/bundle.js",
+    "start": "npm run create-dist && npm run build-elm && http-server dist & chokidar \"src/**/*.elm\" -c \"npm run build-elm\""
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "chokidar-cli": "^3.0.0",
+    "http-server": "^13.0.2"
+  },
+  "dependencies": {
+    "elm": "^0.19.1-5"
+  }
+}
