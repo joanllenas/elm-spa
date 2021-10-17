@@ -4,6 +4,7 @@ import Browser
 import Browser.Navigation as Nav
 import Html exposing (Html)
 import Html.Attributes as Attrs
+import Html.Events as Events
 import Json.Decode
 import Routes
 import Url exposing (Url)
@@ -27,28 +28,48 @@ type Page
 -- Home Page
 
 
+type HomeMsg
+    = Increment
+    | Decrement
+
+
 type alias HomeModel =
-    { title : String
+    { count : Int
+    , shared : SharedModel
     }
 
 
-initHomePage : ( HomeModel, Cmd Msg )
-initHomePage =
-    ( { title = "Home" }, Cmd.none )
+initHomePage : SharedModel -> ( HomeModel, Cmd Msg )
+initHomePage shared =
+    ( { count = 0
+      , shared = shared
+      }
+    , Cmd.none
+    )
 
 
 
 -- SignIn Page
 
 
+type SignInMsg
+    = SignIn String
+    | SetUsername String
+
+
 type alias SignInModel =
-    { title : String
+    { username : String
+    , shared : SharedModel
     }
 
 
-initSignInPage : ( SignInModel, Cmd Msg )
-initSignInPage =
-    ( { title = "Sign In" }, Cmd.none )
+initSignInPage : SharedModel -> ( SignInModel, Cmd Msg )
+initSignInPage shared =
+    ( { username = ""
+      , shared = shared
+      }
+    , Cmd.none
+    )
 
 
 
@@ -60,9 +81,31 @@ initSignInPage =
 
 
 type alias Model =
-    { navKey : Nav.Key
-    , route : Routes.Route
+    { route : Routes.Route
     , page : Page
+    , shared : SharedModel
+    }
+
+
+
+-- Shared
+
+
+type User
+    = SignedIn String
+    | Guest
+
+
+type alias SharedModel =
+    { user : User
+    , navKey : Nav.Key
+    }
+
+
+initShared : Nav.Key -> SharedModel
+initShared key =
+    { user = Guest
+    , navKey = key
     }
 
 
@@ -74,9 +117,17 @@ type alias Model =
 ------------------------------------------------------
 
 
+type SharedMsg
+    = SetUser String
+    | UnsetUser
+
+
 type Msg
     = OnUrlChange Url
     | OnUrlRequest Browser.UrlRequest
+    | GotHomeMsg HomeMsg
+    | GotSignInMsg SignInMsg
+    | GotSharedMsg SharedMsg
     | Noop
 
 
@@ -85,7 +136,7 @@ onUrlRequest urlRequest model =
     case urlRequest of
         Browser.Internal url ->
             ( model
-            , Nav.pushUrl model.navKey (Url.toString url)
+            , Nav.pushUrl model.shared.navKey (Url.toString url)
             )
 
         Browser.External url ->
@@ -100,29 +151,111 @@ loadCurrentPage ( model, cmd ) =
         ( page, pageCmd ) =
             case model.route of
                 Routes.HomeRoute ->
-                    Tuple.mapFirst PageHome initHomePage
+                    Tuple.mapFirst PageHome (initHomePage model.shared)
 
                 Routes.SignInRoute ->
-                    Tuple.mapFirst PageSignIn initSignInPage
+                    Tuple.mapFirst PageSignIn (initSignInPage model.shared)
 
                 Routes.NotFoundRoute ->
                     ( PageNone, Cmd.none )
     in
     ( { model | page = page }, Cmd.batch [ cmd, pageCmd ] )
 
+forceUpdate : Msg -> Cmd Msg
+forceUpdate msg = Cmd.map (always msg) Cmd.none
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    case msg of
-        OnUrlRequest urlRequest ->
+    let
+        executeSharedMsg sharedMsg =
+            sharedMsg
+                |> Maybe.map (\sharedMsg_ -> updateShared sharedMsg_ model.shared)
+                |> Maybe.withDefault model.shared
+    in
+    case ( model.page, msg ) of
+        ( _, OnUrlRequest urlRequest ) ->
             onUrlRequest urlRequest model
 
-        OnUrlChange url ->
+        ( _, OnUrlChange url ) ->
             ( { model | route = Routes.parseUrl url }, Cmd.none )
                 |> loadCurrentPage
 
-        Noop ->
+        ( _, GotSharedMsg sharedMsg ) ->
+            ({model | shared = executeSharedMsg (Just sharedMsg)}
+            , forceUpdate Noop
+            ) 
+
+        ( PageHome homeModel, GotHomeMsg homeMsg ) ->
+            let
+                ( newHomeModel, homeCmd ) =
+                    updateHome homeMsg homeModel
+            in
+            ( { model | page = PageHome newHomeModel }
+            , Cmd.map GotHomeMsg homeCmd
+            )
+
+        ( PageSignIn signInModel, GotSignInMsg signInMsg ) ->
+            let
+                ( newSignInModel, signInCmd, sharedMsg ) =
+                    updateSignIn signInMsg signInModel 
+                newShared = executeSharedMsg sharedMsg
+            in
+            ( { model
+                | page = PageSignIn {newSignInModel | shared = newShared}
+                , shared = newShared
+              }
+            , Cmd.map GotSignInMsg signInCmd
+            )
+
+        ( PageNone, _ ) ->
             ( model, Cmd.none )
+        
+        ( _, _ ) ->
+            ( model, Cmd.none )
+
+
+
+-- Shared Update
+
+
+updateShared : SharedMsg -> SharedModel -> SharedModel
+updateShared msg model =
+    case msg of
+        SetUser username ->
+            { model | user = SignedIn username }
+        UnsetUser ->
+            { model | user = Guest }
+
+
+
+-- Home Update
+
+
+updateHome : HomeMsg -> HomeModel -> ( HomeModel, Cmd HomeMsg )
+updateHome msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+
+
+-- SignIn Update
+
+
+updateSignIn : SignInMsg -> SignInModel -> ( SignInModel, Cmd SignInMsg, Maybe SharedMsg )
+updateSignIn msg model =
+    case msg of
+        SignIn username ->
+            ( model
+            , Routes.replaceUrl model.shared.navKey Routes.HomeRoute
+            , Just (SetUser username)
+            )
+
+        SetUsername username ->
+            ( { model | username = username }, Cmd.none, Nothing )
 
 
 
@@ -166,7 +299,7 @@ view model =
         header =
             viewHeader model
     in
-    { doc | body = header :: doc.body }
+    { doc | body = [ Html.div [ Attrs.style "padding" "20px" ] (header :: doc.body) ] }
 
 
 
@@ -177,6 +310,9 @@ headerStyles : List (Html.Attribute msg)
 headerStyles =
     [ Attrs.style "display" "flex"
     , Attrs.style "gap" "5px"
+    , Attrs.style "padding-bottom" "10px"
+    , Attrs.style "border-bottom" "1px solid #666"
+    , Attrs.style "margin-bottom" "10px"
     ]
 
 
@@ -185,19 +321,47 @@ viewHeader model =
     Html.nav headerStyles
         [ Html.a [ Attrs.href <| Routes.toHref Routes.HomeRoute ] [ Html.text "Home" ]
         , Html.text "|"
-        , Html.a [ Attrs.href <| Routes.toHref Routes.SignInRoute ] [ Html.text "Sign In" ]
+        , loginLink model.shared.user
         ]
+
+
+loginLink : User -> Html Msg
+loginLink user =
+    case user of
+        SignedIn username ->
+            Html.button
+                [ Events.onClick <| GotSharedMsg UnsetUser ]
+                [ Html.text <| "Sign Out [" ++ username ++ "]" ]
+
+        Guest ->
+            Html.a [ Attrs.href <| Routes.toHref Routes.SignInRoute ] [ Html.text "Sign In" ]
 
 
 
 -- Home
 
 
+homeStyles : List (Html.Attribute msg)
+homeStyles =
+    [ Attrs.style "display" "flex"
+    , Attrs.style "gap" "10px"
+    ]
+
+
 viewHome : HomeModel -> Browser.Document Msg
 viewHome model =
-    { title = model.title
+    { title = "Home"
     , body =
-        [ Html.text "Home!!"
+        [ Html.div homeStyles
+            [ case model.shared.user of
+                SignedIn username ->
+                    Html.text <| "Hello " ++ username ++ ": " ++ String.fromInt model.count
+
+                Guest ->
+                    Html.text <| "Hello guest: " ++ String.fromInt model.count
+            , Html.button [ Events.onClick <| GotHomeMsg Increment ] [ Html.text "+" ]
+            , Html.button [ Events.onClick <| GotHomeMsg Decrement ] [ Html.text "-" ]
+            ]
         ]
     }
 
@@ -206,11 +370,26 @@ viewHome model =
 -- SignIn
 
 
+signInStyles : List (Html.Attribute msg)
+signInStyles =
+    [ Attrs.style "display" "flex"
+    , Attrs.style "gap" "5px"
+    ]
+
+
 viewSignIn : SignInModel -> Browser.Document Msg
 viewSignIn model =
-    { title = model.title
+    { title = "Sign in"
     , body =
-        [ Html.text "Sign In!!"
+        [ Html.div signInStyles
+            [ Html.label [ Attrs.for "username" ]
+                [ Html.text "Username"
+                ]
+            , Html.input
+                [ Attrs.id "username", Attrs.type_ "text", Events.onInput (GotSignInMsg << SetUsername) ]
+                [ Html.text model.username ]
+            , Html.button [ Events.onClick <| GotSignInMsg (SignIn model.username) ] [ Html.text "Sign In" ]
+            ]
         ]
     }
 
@@ -225,9 +404,9 @@ viewSignIn model =
 
 init : Json.Decode.Value -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init flagsValue url navKey =
-    ( { navKey = navKey
-      , route = Routes.parseUrl url
+    ( { route = Routes.parseUrl url
       , page = PageNone
+      , shared = initShared navKey
       }
     , Cmd.none
     )

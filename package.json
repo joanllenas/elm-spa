@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "create-dist": "rm -rf dist && cp -R public dist",
-    "build-elm": "elm make src/Main.elm --output=dist/bundle.js",
+    "build-elm": "elm make src/Main.elm --output=dist/bundle.js --debug",
     "start": "npm run create-dist && npm run build-elm && http-server dist & chokidar \"src/**/*.elm\" -c \"npm run build-elm\""
   },
   "author": "",
